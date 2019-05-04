@@ -1,26 +1,35 @@
 import Bio.PDB as bpdb
+import prody as prd
 import numpy as np
 import pandas as pd
+import easygui as eg
+import multiprocessing.dummy as mp
 
+work_dir = eg.diropenbox() + '\\'
+name = input('PDB to be Analyzed (do not include .pdb extension): ')
+structure = prd.parsePDB(work_dir + name + '.pdb')
+back_only = prd.writePDB(work_dir + name + "_backbone.pdb", structure.select('name N CA C'))
+
+#Parse through the backbone
 parser = bpdb.PDBParser()
-work_dir = 'E:/MD/GrBP5_YRRY/5ns_Simulations/pH9/310K/'
-structure = parser.get_structure('YRRY_ph9_310K', work_dir + 'GrBP5_YRRY_pH9_310K_NVT_5ns_BackboneOnly.pdb')
-
-angles_by_frame = pd.DataFrame(columns = np.linspace(1,22,num = 22))
+backbone = parser.get_structure(name, back_only)
 
 frame = 1
-rows = {}
 clmns = []
-for i in range(11):
-    clmns.append('psi' f'{i+1}')
+rows={}
+for i in range(10):
     clmns.append('phi' f'{i+1}')
+    clmns.append('psi' f'{i+1}')
 
-for model in structure.get_models():
-    for chain in model:
-        poly = bpdb.Polypeptide.Polypeptide(chain)
-        angles = poly.get_phi_psi_list()
-        rows['Frame ' f'{frame}'] = np.reshape(angles, [1,len(angles)*2])[0][1:-1] * (180/np.pi)
-        angles_by_frame = pd.DataFrame.from_dict(rows, orient = 'index', columns = clmns)
-    frame += 1
+model_list = bpdb.Selection.unfold_entities(backbone, 'M')
+with mp.Pool() as pool:    
+    chain_list = pool.map(lambda x: x['A'], model_list)
+    poly_list = pool.map(lambda x: bpdb.Polypeptide.Polypeptide(x), chain_list)
+    angle_list = pool.map(lambda x: x.get_phi_psi_list(), poly_list)
+    rowstuff = pool.map(lambda x: np.reshape(x,[1,len(x)*2])[0][2:-2] * (180/np.pi), angle_list)
+    rowlist = list(rowstuff)
 
-print(angles_by_frame)
+#Generate a dataframe, store angles, and save to a csv in a chosen directory
+angles_by_frame = pd.DataFrame(columns = np.linspace(1,22,num = 22))
+angles_by_frame = pd.DataFrame(rowlist,index=np.linspace(1,len(rowlist),num=len(rowlist)),columns=clmns)
+angles_by_frame.to_csv(work_dir + name + '.csv')
