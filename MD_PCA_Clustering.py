@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 from sklearn.decomposition import PCA
 from sklearn import preprocessing
-from sklearn.mixture import GMM
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
@@ -12,9 +11,10 @@ def scale_data(angle_data):
     return scaled
 
 #Perform PCA on the data
-def pca(data):
+def pca(angles, name, dir_name):
     #Get all the PCA components from the data
     pca = PCA()
+    data = scale_data(angles)
     pca.fit(data)
     pca_data = pca.transform(data)
     per_var = np.round(pca.explained_variance_ratio_ * 100, decimals = 1)
@@ -25,7 +25,9 @@ def pca(data):
     plt.ylabel('Percentage of Explained Variance')
     plt.xlabel('Principal Component')
     plt.title('Scree Plot')
+    plt.savefig(dir_name + 'Scree Plot - ' + name + '.png')
     plt.show()
+    plt.close()
     
     pca_df = pd.DataFrame(pca_data, columns = labels)
     
@@ -37,11 +39,32 @@ def pca(data):
         plt.title('Torsion Angle PCA Graph')
         plt.xlabel('PC1 - {0}%'.format(per_var[0]))
         plt.ylabel('PC2 - {0}%'.format(per_var[1]))
-    
+        plt.savefig(dir_name + '2D PCA - ' + name + '.png')
+        plt.close()
+
     #Generate the PCA Graph Based on PC1, PC2, and PC3
     elif graph_type == '3d':
         ax = plt.axes(projection = '3d')
         ax.scatter3D(pca_df.PC1, pca_df.PC2, pca_df.PC3)
+        plt.savefig(dir_name + '3D PCA - ' + name + '.png')
+        plt.close()
         
     else:
         raise Exception('Graph Type must be either "2d" or "3d".')
+        
+    return pca_df, pca
+
+def load_score(pca, PC, n):
+    # loading scores
+    loading_scores = pd.Series(pca.components_[PC])
+
+    # sort loading scores by magnitude
+    sorted_loading_scores = loading_scores.abs().sort_values(ascending=False)
+
+    # get names
+    top_n = sorted_loading_scores[0:n].index.values
+    return top_n
+
+def combine_pcas(pca1, pca2):
+    pca1.append(pca2)
+    return pca1
