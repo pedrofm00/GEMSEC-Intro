@@ -33,6 +33,7 @@ def transition_frequency(total, unique):
     return tf
 
 def plot_tf(trans, tf, wd, name):
+    plt.close()
     plt.bar(x = list(trans.keys()), height = tf)
     plt.title('Transition Frequencies Between Clusters')
     plt.xlabel('Transition')

@@ -31,15 +31,18 @@ save_dir = eg.diropenbox() + '\\'
 with mp.Pool() as pool:
     backbone_list = pool.map(lambda x: tor_calc.get_backbone(work_dirs[x], file_names[x]),
                              range(n))
-    angle_list = pool.map(lambda x: tor_calc.get_angles(x), backbone_list)    
-combined_angles = pd.concat(angle_list)
+    angle_list = pool.map(lambda x: tor_calc.get_angles(x), backbone_list)
+#    combined_angles = pd.concat(angle_list)
+    pca_list = map(lambda x, y: md_pca.pca(x, file_names[y], save_dir)[0], angle_list, range(n))
+    pca_list = list(pca_list)
+    combined_pcas = pd.concat(pca_list)
 
 #Do PCA and GMM on data
-cluster_pca = md_pca.pca(combined_angles, 'Clustered PCA', save_dir)
+#cluster_pca = md_pca.pca(combined_angles, 'Clustered PCA', save_dir)
 
 clust_count = int(input('How many GMM clusters?\n'))
 dim = int(input('How many GMM dimensions?\n'))
-multi_gmm = gmc.cluster_PCA('Multi-PDB GMM', cluster_pca[0], clust_count, dim, save_dir)
+multi_gmm = gmc.cluster_PCA('Multi-PDB GMM', combined_pcas, clust_count, dim, save_dir)
 
 #Calculate the transitions between clusters
 unique_shifts = clst_cnt.count_unique_trans(multi_gmm[0])
