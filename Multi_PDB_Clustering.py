@@ -1,5 +1,4 @@
 #Clustering and transition counts for multiple PDB files
-
 import pandas as pd
 import easygui as eg
 import multiprocessing.dummy as mp
@@ -12,7 +11,6 @@ import GM_Cluster_Transition_Counter as clst_cnt
 n = int(input('How many pdbs would you like to cluster?\n'))
 files = []
 for i in range(1, n+1):
-    print("Select File " + f'{i}' + ': ')
     files.append(eg.fileopenbox())
 
 #Parse file and directory names out of each file selection
@@ -24,10 +22,9 @@ for i in range(len(files)):
     work_dirs.append(files[i][:j])
     
 #Select folder to save files to
-print("Select the Save Directory: ")
 save_dir = eg.diropenbox() + '\\'
 
-#Get all datapoints needed for PCA
+#Complete PCA on each backbone's angles
 with mp.Pool() as pool:
     backbone_list = pool.map(lambda x: tor_calc.get_backbone(work_dirs[x], file_names[x]),
                              range(n))
@@ -37,14 +34,14 @@ with mp.Pool() as pool:
     pca_list = list(pca_list)
     combined_pcas = pd.concat(pca_list)
 
-#Do PCA and GMM on data
 #cluster_pca = md_pca.pca(combined_angles, 'Clustered PCA', save_dir)
 
+#Complete GMM on a combined set of the calculated PCAs
 clust_count = int(input('How many GMM clusters?\n'))
 dim = int(input('How many GMM dimensions?\n'))
 multi_gmm = gmc.cluster_PCA('Multi-PDB GMM', combined_pcas, clust_count, dim, save_dir)
 
-#Calculate the transitions between clusters
+#Calculate the transitions between clusters of the GMM
 unique_shifts = clst_cnt.count_unique_trans(multi_gmm[0])
 total_shifts = clst_cnt.count_trans(multi_gmm[0])
 tf = clst_cnt.transition_frequency(total_shifts, unique_shifts)
