@@ -56,15 +56,21 @@ def pca(angles, name, dir_name):
 
 def load_score(pca, PC, n):
     # loading scores
-    loading_scores = pd.Series(pca.components_[PC])
+    if PC.lower() == "all":
+        all_scores = map(lambda x: pd.Series(pca.components_[x]), range(len(pca.components_)))
+        all_sorted_scores = list(map(lambda x: x.abs().sort_values(ascending = False), all_scores))
+        all_top_n = list(map(lambda x: x[0:n].index.values, all_sorted_scores))
+        all_top_n_scores = list(map(lambda x: x[0:n].values, all_sorted_scores))
+        return all_top_n, all_top_n_scores
+    
+    else:
+        PC = int(PC)
+        loading_scores = pd.Series(pca.components_[PC])
 
-    # sort loading scores by magnitude
-    sorted_loading_scores = loading_scores.abs().sort_values(ascending=False)
+        # sort loading scores by magnitude
+        sorted_loading_scores = loading_scores.abs().sort_values(ascending=False)
 
-    # get names
-    top_n = sorted_loading_scores[0:n].index.values
-    return top_n
-
-def combine_pcas(pca1, pca2):
-    pca1.append(pca2)
-    return pca1
+        # get names
+        top_n = sorted_loading_scores[0:n].index.values
+        top_n_scores = sorted_loading_scores[0:n].values
+        return top_n, top_n_scores
