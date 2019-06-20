@@ -11,16 +11,18 @@ def scale_data(angle_data):
     return scaled
 
 #Perform PCA on the data
-def pca(angles, name, dir_name):
+def pca(angles, name, dir_name, graph_type):
     #Get all the PCA components from the data
     pca = PCA()
-    data = scale_data(angles)
+    pc_angles = angles.drop(angles.index[0.0])
+    data = scale_data(pc_angles)
     pca.fit(data)
     pca_data = pca.transform(data)
     per_var = np.round(pca.explained_variance_ratio_ * 100, decimals = 1)
     labels = ['PC' + str(x) for x in range(1, len(per_var) + 1)]
     
     #Create a Scree Plot of the components
+    plt.close()
     plt.bar(x = range(1, len(per_var) + 1), height = per_var, tick_label = labels)
     plt.ylabel('Percentage of Explained Variance')
     plt.xlabel('Principal Component')
@@ -31,11 +33,9 @@ def pca(angles, name, dir_name):
     
     pca_df = pd.DataFrame(pca_data, columns = labels)
     
-    graph_type = input('2d or 3d Graph: ')
-    graph_type = graph_type.lower()
     #Generate the PCA Graph based on PC1 and PC2
     if graph_type == '2d':
-        plt.scatter(pca_df.PC1, pca_df.PC2)
+        plt.scatter(pca_df.PC1, pca_df.PC2, s = 0.01)
         plt.title('Torsion Angle PCA Graph')
         plt.xlabel('PC1 - {0}%'.format(per_var[0]))
         plt.ylabel('PC2 - {0}%'.format(per_var[1]))
@@ -45,7 +45,10 @@ def pca(angles, name, dir_name):
     #Generate the PCA Graph Based on PC1, PC2, and PC3
     elif graph_type == '3d':
         ax = plt.axes(projection = '3d')
-        ax.scatter3D(pca_df.PC1, pca_df.PC2, pca_df.PC3)
+        ax.scatter3D(pca_df.PC1, pca_df.PC2, pca_df.PC3, s = 0.01)
+        plt.xlabel('PC1 - {0}%'.format(per_var[0]))
+        plt.ylabel('PC2 - {0}%'.format(per_var[1]))
+        plt.ylabel('PC3 - {0}%'.format(per_var[2]))
         plt.savefig(dir_name + '3D PCA - ' + name + '.png')
         plt.close()
         

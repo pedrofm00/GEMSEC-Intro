@@ -28,11 +28,16 @@ def get_angles(backbone):
     
     #Generate a dataframe and store angles
     clmns = []
+    end_marks = []
     for i in range(10):
         clmns.append('phi' f'{i+1}')
         clmns.append('psi' f'{i+1}')
+        end_marks.append('EoS')
+        end_marks.append('EoS')
     
     angles_by_frame = pd.DataFrame(columns = np.linspace(1,22,num = 22))
     angles_by_frame = pd.DataFrame(rowlist,index=np.linspace(1,len(rowlist),num=len(rowlist)),columns=clmns)
-    
+    end_marks = pd.DataFrame(end_marks, index = clmns)
+    angles_by_frame = angles_by_frame.append(end_marks.T)
+
     return angles_by_frame
