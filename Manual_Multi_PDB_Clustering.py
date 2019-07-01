@@ -10,16 +10,19 @@ import Ramachandran_Plotting as rmp
 n = int(input('How many pdbs would you like to cluster?\n'))
 files = []
 for i in range(1, n+1):
-    files.append(eg.fileopenbox())
+    files.append(eg.fileopenbox(msg = "Choose file " + f'{i}'))
 fn, wd = mpdbc.get_names_dirs(files)
 
 #Select folder to save files to
-save_dir = eg.diropenbox() + '\\'
+save_dir = eg.diropenbox(msg = "Choose Save Directory") + '\\'
 
 #Analyze
 comb_angles = mpdbc.get_combo_angles(fn, wd, n)
 cluster_pca = mpdbc.md_pca.pca(comb_angles, 'PCA of Peptide Torsion Angles',
                                save_dir, '2d')
+mpdbc.PC_den_plt(cluster_pca[0], save_dir)
+mpdbc.gen_2d_PCA_gif(cluster_pca, save_dir)
+mpdbc.plt_path(cluster_pca, save_dir)
 gmm = mpdbc.GMM_process(cluster_pca[0], save_dir)
 gmc.clust_prop(gmm[1], gmm[0][0], files).to_csv(path_or_buf = save_dir +
               '\\Simulation Densities per Cluster.csv')
