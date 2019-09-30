@@ -2,64 +2,112 @@
 # =============================================================================
 # Created on Thu Jul 11 10:56:42 2019
 # 
-# @author: pedro
+# @author: Pedro Fischer Marques`
 # =============================================================================
 
-class Clustering:
-    #Parse file and directory names out of each file selection
-    def get_names_dirs(files):
-        file_names = []
-        work_dirs = []
-        for i in range(len(files)):
-            j = files[i].rindex('\\') + 1
-            file_names.append(files[i][j:-4])
-            work_dirs.append(files[i][:j])
-        return file_names, work_dirs
-    
+# =============================================================================
+# IMPORTS
+# =============================================================================
+
+#General Libraries
+import os
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+import multiprocessing.dummy as mp
+
+#PDB Parsing Libraries
+import prody as prd
+from Bio import PDB
+import scipy.constants as const
+
+#Dimensional Reduction Libraries
+from sklearn.manifold import MDS #Multi Dimensional Scaling
+from sklearn.manifold import TSNE
+from sklearn.manifold import Isomap
+from sklearn.decomposition import PCA
+from sklearn.decomposition import FastICA
+from sklearn.manifold import SpectralEmbedding as LE #Laplacian Eigenmaps
+
+#PCA Libraries
+import imageio
+from sklearn import preprocessing
+from scipy.stats import gaussian_kde
+from mpl_toolkits.mplot3d import Axes3D
+
+#GMM Libraries
+import itertools
+import matplotlib as mpl
+from scipy import linalg
+from sklearn import mixture
+
+#Ramachandran Libraries
+import scipy.stats as stat
+
+#Transformations Libraries
+from scipy import signal
+
+# =============================================================================
+# CLASSES
+# =============================================================================
+
+class Multi_PDB():
+    def __init__(self, file_list):
+        self.files = file_list
+        
     #Create a list of all backbone angles across all conditions
-    def get_combo_angles(file_names, work_dirs, n):
+    #Parameters:
+    #   -files: list of str; a list of all pdbs with angles to be combined
+    #Returns:
+    #   -combined_angles: pandas DataFrame; a dataframe containing all phi/psi angles
+    #                     for each condition, separated by rows of np.nan
+    def get_combo_angles(self):
         #Import necessary packages
-        import pandas as pd
-        import multiprocessing.dummy as mp
         from MD_Analysis import Angle_Calc
         
         with mp.Pool() as pool:
-            backbone_list = pool.map(lambda x: Angle_Calc.get_backbone(work_dirs[x], file_names[x]),
-                                     range(n))
+            backbone_list = pool.map(lambda x: Angle_Calc.get_backbone(self.files[x]),
+                                     range(len(self.files)))
             angle_list = pool.map(lambda x: Angle_Calc.get_angles(x), backbone_list)
             combined_angles = pd.concat(angle_list)
         return combined_angles
 
-class Angle_Calc:
+class Angle_Calc():
+    def __init__(self, in_file):
+        self.file = in_file
+        self.angles = pd.DataFrame()
+        self.chi_angles = pd.DataFrame()
+    
     #Get a backbone from a pdb
-    def get_backbone(work_dir, name):
-        #Import necessary packages
-        import prody as prd
-        import Bio.PDB as bpdb
-        
+    #Parameters:
+    #   -file: str; name of the pdb to parse a backbone from
+    #Returns:
+    #   -backbone: Bio.PDB structure object; the backbone structure given by the pdb
+    def __get_backbone(self):
         #Parse the pdb file for its structure and then backbone
-        structure = prd.parsePDB(work_dir + name + '.pdb')
-        back_only = prd.writePDB(work_dir + name + "_backbone.pdb", structure.select('name N CA C'))
+        structure = prd.parsePDB(self.file)
+        back_only = prd.writePDB(self.file[:-4] + "_backbone.pdb", structure.select('name N CA C'))
         
         #Parse through the backbone
-        parser = bpdb.PDBParser()
-        backbone = parser.get_structure(name, back_only)
+        parser = PDB.PDBParser()
+        backbone = parser.get_structure(os.path.basename(self.file)[:-4], back_only)
     
         return backbone
     
     #Get phi/psi angles from a backbone pdb
-    def get_phi_psi(backbone):
-        #Import necessary packages
-        import Bio.PDB as bpdb
-        import pandas as pd
-        import numpy as np
-        import multiprocessing.dummy as mp
-        
+    #Parameters:
+    #   -pdb: str; the pdb file to get angles from
+    #Returns:
+    #   -angles_by_frame: pandas DataFrame; contains all phi/psi angles (columns) 
+    #                     for each frame (rows) from the simulation in the pdb file
+    def get_phi_psi(self):
         #Get phi/psi angles from biopython
-        model_list = bpdb.Selection.unfold_entities(backbone, 'M')
+        backbone = self.__get_backbone()
+        model_list = PDB.Selection.unfold_entities(backbone, 'M')
         with mp.Pool() as pool:
             chain_list = pool.map(lambda x: x['A'], model_list)
-            poly_list = pool.map(lambda x: bpdb.Polypeptide.Polypeptide(x), chain_list)
+            poly_list = pool.map(lambda x: PDB.Polypeptide.Polypeptide(x), chain_list)
             angle_list = pool.map(lambda x: x.get_phi_psi_list(), poly_list)
             rowstuff = pool.map(lambda x: np.reshape(x,[1,len(x)*2])[0][2:-2] * (180/np.pi), angle_list)
             rowlist = list(rowstuff)
@@ -70,21 +118,25 @@ class Angle_Calc:
         for i in range(10):
             clmns.append('phi' f'{i+1}')
             clmns.append('psi' f'{i+1}')
-            end_marks.append('EoS')
-            end_marks.append('EoS')
+            end_marks.append(np.nan)
+            end_marks.append(np.nan)
     
         angles_by_frame = pd.DataFrame(columns = np.linspace(1,20,num = 20))
         angles_by_frame = pd.DataFrame(rowlist,index=np.linspace(1,len(rowlist),num=len(rowlist)),columns=clmns)
         end_marks = pd.DataFrame(end_marks, index = clmns)
         angles_by_frame = angles_by_frame.append(end_marks.T)
 
+        self.angles = angles_by_frame
         return angles_by_frame
     
     #Define all possible chi angles for each residue
+    #Returns:
+    #   -chi_atoms: dict; a dictionary of all possible chi angle combinations
+    #               for each amino acid
     #Credit:
         # Copyright (c) 2014 Lenna X. Peterson, all rights reserved
         # lenna@purdue.edu
-    def __gen_chi_list():
+    def __gen_chi_list(self):
         chi_atoms = dict(
             chi1=dict(
                 ARG=['N', 'CA', 'CB', 'CG'],
@@ -141,12 +193,12 @@ class Angle_Calc:
         return chi_atoms
     
     #Calculate the chi angle between a set of four atoms from a residue
-    def __calc_chi(residue, group):
-        #Import Necessary Packages
-        from Bio import PDB
-        import scipy.constants as const
-        self = Angle_Calc
-        
+    #Parameters:
+    #   -residue: Bio.PDB residue object; the residue to calculate chi angles for
+    #   -group: str; the chi angle to be calculated (i.e. chi1, chi2, etc.)
+    #Returns:
+    #   -float; the value of the chi angle in degrees (between -180 and 180)
+    def __calc_chi(self, residue, group):
         #Define all possible chi angles for each residue
         chi_atoms = self.__gen_chi_list()
 
@@ -166,19 +218,18 @@ class Angle_Calc:
         return PDB.calc_dihedral(atom1, atom2, atom3, atom4)*(180/const.pi)
 
     #Get chi angles for each residue from a pdb
-    def get_chi(file):
-        #Import Necessary Packages
-        from Bio import PDB
-        import pandas as pd
-        import multiprocessing.dummy as mp
-        self = Angle_Calc
-        
+    #Parameters:
+    #   -file: str; name of the pdb to gather chi angles from
+    #Returns:
+    #   -chi_df: pandas DataFrame; a dataframe of all chi angles for each residue
+    #            at each time frame during the simulation
+    def get_chi(self):
         #Define all possible chi angles for each residue
         chi_atoms = self.__gen_chi_list()
             
         #Import the pdb structure file
         parser = PDB.PDBParser()
-        pep = parser.get_structure(file[:-4], file)
+        pep = parser.get_structure(self.file[:-4], self.file)
         
         #Get a list of each residue
         model_list = PDB.Selection.unfold_entities(pep, 'M')
@@ -232,13 +283,16 @@ class Angle_Calc:
                     chi_dict["Chi 5"].append(0.0)
         
         chi_df = pd.DataFrame.from_dict(chi_dict)
+        self.chi_angles = chi_df
         return chi_df
     
-    def get_sin_cos(angle_df):
-        #Import necessary packages
-        import pandas as pd
-        import numpy as np
-        
+    #Calculate the sin and cos values of each angle in a given dataframe
+    #Parameters:
+    #   -angle_df: pandas DataFrame; a dataframe of angles for each time frame
+    #Returns:
+    #   -sc_df: pandas DataFrame; a dataframe of the sin/cos values for each residue
+    #           at each time frame
+    def get_sin_cos(self, angle_df):
         #Create the new dataframe
         sc_df = pd.DataFrame()
         
@@ -249,21 +303,33 @@ class Angle_Calc:
             else:
                 sc_df['Sin - ' + col] = angle_df[col].map(lambda x: np.sin(x))
                 sc_df['Cos - ' + col] = angle_df[col].map(lambda x: np.cos(x))
-        
-class PCA_Analysis:
-    #Function to complete Principle Component Analysis on a given dataset
-    def pca(angles, file_name, dir_name, graph_type):
-        #Import necessary packages
-        import pandas as pd
-        import numpy as np
-        from sklearn.decomposition import PCA
-        from sklearn import preprocessing
-        import matplotlib.pyplot as plt
-        from mpl_toolkits.mplot3d import Axes3D
+                
+        return sc_df
+                
+#Includes all currently used methods of dimensionality reduction
+class Dim_Reduction():
+    def __init__(self, in_file, angle_df, save_dir):
+        self.file = in_file
+        self.angles = angle_df
+        self.sdir =  save_dir
+
+    #Function to complete Principal Component Analysis on a given dataset
+    #Parameters:
+    #   -angles: pandas DataFrame; dataframe of all angles to be graphed with PCA
+    #   -file: str; the selected pdb file
+    #   -dir_name: str; the directory to save the graph into
+    #   -graph_type: str; "2d" or "3d", defines the type of graph to produce
+    #   -biplot: bool; defines whether to create a biplot or not
+    #Returns:
+    #   -pca_df: pandas DataFrame; dataframe of all PCs and their values for each
+    #            time frame
+    #   -pca: PCA object of sklearn; 
+    def pca(self, graph_type, biplot = True):
+        file_name = os.path.basename(self.file)[:-4]
         
         #Get all the PCA components from the data
         pca = PCA()
-        pc_angles = angles.drop(index = 0.0)
+        pc_angles = self.angles.dropna(axis = 0)
         data = preprocessing.scale(pc_angles)
         pca.fit(data)
         pca_data = pca.transform(data)
@@ -272,12 +338,11 @@ class PCA_Analysis:
         
         #Create a Scree Plot of the components
         plt.close()
-        plt.bar(x = range(1, len(per_var) + 1), height = per_var,
-                tick_label = labels, rotation = 'vertical')
+        plt.bar(x = range(1, len(per_var) + 1), height = per_var, tick_label = labels)
         plt.ylabel('Percentage of Explained Variance')
         plt.xlabel('Principal Component')
         plt.title('Scree Plot')
-        plt.savefig(dir_name + 'Scree Plot - ' + file_name + '.png')
+        plt.savefig(self.sdir + 'Scree Plot - ' + file_name + '.png')
         plt.show()
         plt.close()
         
@@ -285,11 +350,17 @@ class PCA_Analysis:
     
         #Generate the PCA Graph based on PC1 and PC2
         if graph_type == '2d':
-            plt.scatter(pca_df.PC1, pca_df.PC2, s = 0.01)
+            plt.scatter(pca_df.PC1, pca_df.PC2, s = 0.05)
             plt.title('Torsion Angle PCA Graph')
             plt.xlabel('PC1 - {0}%'.format(per_var[0]))
             plt.ylabel('PC2 - {0}%'.format(per_var[1]))
-            plt.savefig(dir_name + '2D PCA - ' + file_name + '.png')
+            if biplot:
+                comps = np.transpose(pca.components_[0:2, :])
+                for i in range(comps.shape[0]):
+                    plt.arrow(0, 0, comps[i, 0], comps[i, 1], color = 'r', alpha = 0.5)
+                plt.savefig(self.sdir + '2D PCA Biplot - ' + file_name + '.png')
+            else:
+                plt.savefig(self.sdir + '2D PCA - ' + file_name + '.png')
             plt.close()
             
         #Generate the PCA Graph Based on PC1, PC2, and PC3
@@ -300,20 +371,56 @@ class PCA_Analysis:
             ax.set_xlabel('PC1 - {0}%'.format(per_var[0]))
             ax.set_ylabel('PC2 - {0}%'.format(per_var[1]))
             ax.set_zlabel('PC3 - {0}%'.format(per_var[2]))
-            plt.savefig(dir_name + '3D PCA - ' + file_name + '.png')
+            if biplot:
+                comps = np.transpose(pca.components_[0:3, :])
+                for i in range(comps.shape[0]):
+                    ax.plot([0, comps[i, 0]], [0, comps[i, 1]], [0, comps[i, 2]], color = 'r', alpha = 0.5)
+                    plt.savefig(self.sdir + '3D PCA Biplot - ' + file_name + '.png', pad_inches = 0)
+            else:
+                plt.savefig(self.sdir + '3D PCA - ' + file_name + '.png', pad_inches = 0)
             plt.close()
         
         else:
             raise Exception('Graph Type must be either "2d" or "3d".')
         
-        return pca_df, per_var
-
-    #Function to gather loading scores after PCA is completed
-    def load_score(pca, PC, n = 3, bottom = False):
-        #import necessary packages
-        import pandas as pd
-        import multiprocessing.dummy as mp
+        return pca_df, pca
+    
+# =============================================================================
+#     FUTURE METHODS BELOW
+# =============================================================================
+    
+    def t_ICA(self):
+        return
+    
+    def Multi_Dim_Scaling(self):
+        return
+    
+    def LEM(self):
+        return
+    
+    def t_SNE(self):
+        return
+    
+    def IsoMap(self):
+        return
         
+class PCA_Components():
+    def __init__(self, pca_df, save_dir):
+        self.pca_df = pca_df
+        self.sdir = save_dir
+    
+    def __naming(s, t, p):
+        
+    #Function to gather loading scores after PCA is completed
+    #Parameters:
+    #   -pca: sklearn PCA object; 
+    #   -PC: str; 
+    #   -n: int
+    #   -bottom: bool; 
+    #Returns:
+    #   -top_LS: pandas DataFrame; 
+    #   -bot_LS: pandas DataFrame; 
+    def load_score(pca, PC, n = 3, bottom = False):        
         #Gather and return loading scores for all PCs
         #Optional: provide "n" for how many top/bottom scores to display
         if PC.lower() == "all":
@@ -346,18 +453,52 @@ class PCA_Analysis:
             top_n_scores = sorted_loading_scores[0:n].values
             top_LS = pd.DataFrame.from_dict({"PC": top_n, "Score": top_n_scores})
             if bottom:
-                    bot_n = pool.map(lambda x: x[-n:].index.values, sorted_loading_scores)
-                    bot_n_scores = pool.map(lambda x: x[-n:].values, sorted_loading_scores)
-                    bot_LS = pd.DataFrame.from_dict({"PC": bot_n, "Score": bot_n_scores})
-                    return top_LS, bot_LS
+                bot_n = sorted_loading_scores[-n:].index.values
+                bot_n_scores = sorted_loading_scores[-n:].values
+                bot_LS = pd.DataFrame.from_dict({"PC": bot_n, "Score": bot_n_scores})
+                return top_LS, bot_LS
             return top_LS
+
+    #FUNCTION DESCRIPTION
+    #Parameters:
+    #   -pca_df: pandas DataFrame;
+    #   -wd: str;
+    #   -seq: str;
+    #   -temp: str;
+    #   -pH: str;
+    def PC_den_plt(self, seq='', temp='', pH=''):
+        file = self.__naming(seq, temp, pH)
+    
+        pc1 = self.pca_df.PC1
+        pc2 = self.pca_df.PC2
+    
+        #For a single PC plot
+        f = plt.figure()
+        sns.kdeplot(pc1, pc2, shade = True, shade_lowest = False, n_levels = 75,
+                    cmap = "terrain_r", cbar = True)
         
-    def PC_den_plt(pca_df, wd, seq='', temp='', pH=''):
-        #Import necessary packages
-        import matplotlib.pyplot as plt
-        import seaborn as sns
+        #For Multiple PC plots
+        #    f, ([ax1, ax2], [ax3, ax4]) = plt.subplots(2, 2)
+        #    
+        #    sns.kdeplot(pc1, pc2, shade = True, n_levels = 75, cmap = "Purples", ax = ax1)
+        #    sns.kdeplot(pc1, pc2, shade = True, n_levels = 75, cmap = "Blues", ax = ax2)
+        #    sns.kdeplot(pc1, pc2, shade = True, n_levels = 75, cmap = "GnBu", ax = ax3)
+        #    sns.kdeplot(pc1, pc2, shade = True, n_levels = 75, cmap = "Oranges", ax = ax4)
+
+        f.savefig(self.sdir + file + '.png', pad_inches = 0)
+        plt.close()
         
-        file = '\\PCA Density Plot'
+    #FUNCTION DESCRIPTION    
+    #Parameters:
+    #   -pca: list of pandas DataFrame [0] and sklearn pca object [1]; 
+    #   -wd: str;
+    #   -seq: str;
+    #   -temp: str;
+    #   -pH: str;
+    def PC_prob_map(pca, wd, seq='', temp='', pH=''):
+        #Convert naming function to a class on its own
+        
+        file = 'PCA Probability Map'
         if seq != '':
             file += ' - ' + seq
             if temp != '':
@@ -370,33 +511,38 @@ class PCA_Analysis:
                 file += '_' + pH
         elif pH != '':
             file += ' - ' + pH
-    
-        pc1 = pca_df.PC1
-        pc2 = pca_df.PC2
-    
-        #For a single PC plot
-        f = plt.figure()
-        sns.kdeplot(pc1, pc2, shade = True, n_levels = 75, cmap = "Purples")
         
-        #For Multiple PC plots
-        #    f, ([ax1, ax2], [ax3, ax4]) = plt.subplots(2, 2)
-        #    
-        #    sns.kdeplot(pc1, pc2, shade = True, n_levels = 75, cmap = "Purples", ax = ax1)
-        #    sns.kdeplot(pc1, pc2, shade = True, n_levels = 75, cmap = "Blues", ax = ax2)
-        #    sns.kdeplot(pc1, pc2, shade = True, n_levels = 75, cmap = "GnBu", ax = ax3)
-        #    sns.kdeplot(pc1, pc2, shade = True, n_levels = 75, cmap = "Oranges", ax = ax4)
+        pca_df = pca[0]
+        per_var = np.round(pca[1].explained_variance_ratio_ * 100, decimals = 1)
 
-        f.savefig(wd + file, pad_inches = 0)
+        xmin = pca_df.PC1.min()
+        xmax = pca_df.PC1.max()
+        ymin = pca_df.PC2.min()
+        ymax = pca_df.PC2.max()
+        X, Y = np.mgrid[xmin:xmax:100j, ymin:ymax:100j]
+        positions = np.vstack([X.ravel(), Y.ravel()])
+        values = np.vstack([pca_df.PC1, pca_df.PC2])
+        kernel = gaussian_kde(values)
+        Z = np.reshape(kernel(positions).T, X.shape)
+        Z1 = Z*((xmax-xmin)/100)*((ymax-ymin)/100)
+        
+        ax = sns.heatmap(Z1, cmap="BuPu")
+        ax.set_xlim(0, 100)
+        ax.set_ylim(0, 100)
+        plt.title('Title')
+        plt.xlabel('PC1 - {0}%'.format(per_var[0]))
+        plt.ylabel('PC2 - {0}%'.format(per_var[1]))
+        plt.savefig(wd + file + '.png', pad_inches = 0)
         plt.close()
-        
-    def gen_2d_PCA_gif(pca, wd, seq='', temp='', pH=''):
-        #Import necessary packages
-        import numpy as np
-        import matplotlib.pyplot as plt
-        import multiprocessing.dummy as mp
-        import imageio
-        import os
-        
+    
+    #FUNCTION DESCRIPTION
+    #Parameters:
+    #   -pca: list of pandas DataFrame [0] and sklearn pca object [1]; 
+    #   -wd: str;
+    #   -seq: str;
+    #   -temp: str;
+    #   -pH: str;
+    def gen_2d_PCA_gif(pca, wd, seq='', temp='', pH=''):        
         #Appropriately name the file
         file = 'Evolution of Conformation in PC Space'
         if seq != '':
@@ -446,16 +592,13 @@ class PCA_Analysis:
         for frame in frames:
             os.remove(wd + file + ' - Frame ' + f'{frame}' + '.png')
 
-class GMM_Clustering:
+class GMM_Clustering():
     #Plot all points in a color clustered PC graph
-    def plot_clusters(X, Y_, means, covariances, index, title, dirname):
-        #Import necessary packages
-        import matplotlib.pyplot as plt
-        import matplotlib as mpl
-        from scipy import linalg
-        import numpy as np
-        import itertools
-        
+    #Parameters:
+    #   -
+    #Returns:
+    #   -
+    def __plot_clusters(X, Y_, means, covariances, index, title, dirname):
         #Colors of clusters
         color_iter = itertools.cycle(['navy', 'c', 'cornflowerblue', 'gold',
                               'darkorange', 'crimson', 'g', 'darkviolet',
@@ -490,16 +633,17 @@ class GMM_Clustering:
         plt.savefig(dirname + title + '.png')
     
     #Cluster PC points based on Gaussian Mixture Similarities
-    def cluster_PCs(name, pca_df, n, dim, dir_name):
-        #Import necessary packages
-        from sklearn import mixture
-        import plot_clusters
-        import matplotlib.pyplot as plt
+    #Parameters:
+    #   -
+    #Returns:
+    #   -
+    def cluster_PCs(self, file, pca_df, n, dim, dir_name):
+        name = os.path.basename(file)[:-4]
         
         #Use Gaussian Mixture Clustering to cluster PC data
         gmm = mixture.GaussianMixture(n_components = n).fit(pca_df.iloc[:,0:dim].values)
         #Plot the Clusters
-        plot_clusters(pca_df.iloc[:,0:dim].values, gmm.predict(pca_df.iloc[:,0:dim].values), 
+        self.__plot_clusters(pca_df.iloc[:,0:dim].values, gmm.predict(pca_df.iloc[:,0:dim].values), 
                      gmm.means_, gmm.covariances_, 0, 'Gaussian Mixture - ' + name, dir_name)
         
         #Collect a dataframe of the cluster each point is placed in
@@ -530,10 +674,11 @@ class GMM_Clustering:
         return predictions, gmm.means_, gmm.covariances_
     
     #Calculate the proportions of each cluster made up by each simulation
+    #Parameters:
+    #   -
+    #Returns:
+    #   -
     def clust_prop(nc, pred, sims):
-        #Import necessary packages
-        import pandas as pd
-        
         #
         n_sims = len(sims)
         sim_size = len(pred)/n_sims
@@ -563,7 +708,12 @@ class GMM_Clustering:
         cp_df = pd.DataFrame.from_dict(cp_d, orient = 'index')
         return cp_df
     
-class GMM_Transitions:
+class GMM_Transitions():
+    #FUNCTION DESCRIPTION
+    #Parameters:
+    #   -
+    #Returns:
+    #   -
     def count_trans(pred):
         trans_count = 0
     
@@ -574,36 +724,42 @@ class GMM_Transitions:
                 trans_count += 1
         return trans_count
     
+    #FUNCTION DESCRIPTION
+    #Parameters:
+    #   -
+    #Returns:
+    #   -
     def transition_frequency(total, unique):
         tf = []
         for key in list(unique.keys()):
             tf.append(unique[key]/total)
         return tf
 
+    #FUNCTION DESCRIPTION
+    #Parameters:
+    #   -
+    #Returns:
+    #   -
     def plot_tf(trans, tf, wd, name):
-        #Import necessary packages
-        import matplotlib.pyplot as plt
-        
         plt.close()
         plt.bar(x = list(trans.keys()), height = tf)
         plt.xticks(rotation = 75)
         plt.title('Transition Frequencies Between Clusters')
         plt.xlabel('Transition')
         plt.ylabel('Frequency')
-        plt.savefig(wd + 'Transition Frequencies Between Clusters - ' + name)
+        plt.savefig(wd + 'Transition Frequencies Between Clusters - ' + name + '.png')
         plt.close()
     
-class Ramachandran:
+class Ramachandran():
     #Create a Ramachandran Plot for one set of phi/psi angles
+    #Parameters:
+    #   -
+    #Returns:
+    #   -
     def plt_one(angles, res, work_dir, name):
-        #Import Necessary Packages
-        import numpy as np
-        import matplotlib.pyplot as plt
-        import scipy.stats as stat
-        
         #Load Angles
-        phis = angles['phi' + res]
-        psis = angles['psi' + res]
+        phis = angles['phi' + res].dropna(axis = 0)
+        psis = angles['psi' + res].dropna(axis = 0)
     
         #Calculate point density
         phipsi = np.vstack([phis, psis])
@@ -623,16 +779,15 @@ class Ramachandran:
         ax.axvline(0, color = 'black')
         
         #Save the figure and close it
-        plt.savefig(work_dir + name + ' - Residue ' + res + ' Ramachandran')
+        plt.savefig(work_dir + name + ' - Residue ' + res + ' Ramachandran.png')
         plt.close()
         
     #Generates plots for all residues of the chain
-    def plt_all(angles, work_dir, file):    
-        #Import Necessary Packages
-        import numpy as np
-        import multiprocessing.dummy as mp
-        import plt_one
-        
+    #Parameters:
+    #   -
+    #Returns:
+    #   -
+    def plt_all(self, angles, work_dir, file):    
         #Gather all amino acid residues to plot
         res_list = np.linspace(1, len(angles.columns)//2, num = len(angles.columns)//2)
         with mp.Pool() as pool:
@@ -641,32 +796,33 @@ class Ramachandran:
         
         #Plot each residue individually
         for res in res_list:
-            plt_one(angles, res, work_dir, file)
+            self.plt_one(angles, res, work_dir, file)
     
     #Generates plots for each cluster in PC space
-    def plt_clust(gmm, angles, work_dir):
-        #Import Necessary Packages
-        import plt_all
-        
+    #Parameters:
+    #   -
+    #Returns:
+    #   -
+    def plt_clust(self, gmm, angles, work_dir):
         #Collects the number of clusters
         nc = gmm[1]
         #Drops all EoS lines
-        clst_angles = angles.drop(index = 0.0)
+        clst_angles = angles.dropna(axis = 0)
         #Appends a column with predictions to each frame
         clst_angles['Clusters'] = gmm[0][0]
         #Gather the frames for each cluster, then plot all for each grouping
         for i in range(nc):
             cluster_phi_psi = clst_angles[clst_angles['Cluster'] == i]
-            plt_all(cluster_phi_psi, work_dir, 'Cluster ' + f'{i}')
+            self.plt_all(cluster_phi_psi, work_dir, 'Cluster ' + f'{i}')
             
-class Hilbert_Transform:
+class Hilbert():
     ## ROT rotates and flips a quadrant appropriately.
     #  Parameters:
     #    Input, integer N, the length of a side of the square.  
     #    N must be a power of 2.
     #    Input/output, integer X, Y, the coordinates of a point.
     #    Input, integer RX, RY, ???
-    def rot(n, x, y, rx, ry):
+    def __rot(n, x, y, rx, ry):
         if (ry == 0):
             #Reflect.
             if (rx == 1):
@@ -692,7 +848,7 @@ class Hilbert_Transform:
     #    0 <= X, Y < N.
     #    Output, integer D, the Hilbert coordinate of the cell.
     #    0 <= D < N * N.
-    def xy2d(self, x,y):
+    def __xy2d(self, x, y):
         
         m = 10    # index of hilbert curve
         n = 1024    # number of boxes (2^m)
@@ -704,7 +860,6 @@ class Hilbert_Transform:
         n = 2 ** m
     
         s = ( n // 2 )
-    
         while ( 0 < s ):
             if ( 0 <  ( abs ( xcopy ) & s ) ):
                 rx = 1
@@ -715,41 +870,134 @@ class Hilbert_Transform:
             else:
                 ry = 0
             d = d + s * s * ( ( 3 * rx ) ^ ry )
-            xcopy, ycopy = self.rot(s, xcopy, ycopy, rx, ry )
+            xcopy, ycopy = self.__rot(s, xcopy, ycopy, rx, ry)
             s = ( s // 2 )
         return d
 
-    def hilb_collapse(self, data_2d):
-        #Import necessary packages
-        import numpy as np
-        import pandas as pd
+    #FUNCTION DESCRIPTION
+    #Parameters:
+    #   -
+    #Returns:
+    #   -
+    def hilb_curve(self, data_2d):
+        #Drop all EoS rows
+        data_2d = data_2d.dropna(axis = 0)
         
         #Transform and round data to integer values into pixel space
-        #   - adding 180 because our lowest phi/psi value possible is -180 and we
-        #       want lowest value to be zero.
-        #   - dividing by 1023 because we are using order 10 (0-1023 is 1024)        
-        transformed_data = data_2d.apply(lambda x: np.round((x+180)/(360/1023), decimals=0))
-        rounded_data = transformed_data.apply(np.int64)
-        
-        #Combine phi psi values into one column
-        combined_data = pd.DataFrame(index=rounded_data.index)
-        for i in [0,2,4,6,8,10,12,14,16,18]:
-            combined_data['AA'+str(i)]=rounded_data.iloc[:,i:i+2].values.tolist()
-        
-        #####INCOMPLETE#####
-# =============================================================================
-#         #Convert 2d into 1d
-#         hilbert_data = np.zeros((19986, 10))
-#         for i in range(19986):
-#             for j in range(10):
-#                 hilbert_data[i, j] = self.xy2d(combined_data.iloc[i,j][0],combined_data.iloc[i,j][1])
-# 
-#         #Add index and column titles to hilbert data
-#         hilbert_data=pd.DataFrame(hilbert_data,index=combined_data.index,columns=combined_data.columns)
-# 
-#         #Save
-#         hilbert_data.to_csv('hd_' + name + '.csv')
-# =============================================================================    
+        #   - Normalize data to be between 0 and 1
+        #   - multiplying by 1023 because we are using order 10 (0-1023 is 1024)
+        xmin = min(data_2d.min())
+        xmax = max(data_2d.max())
+        transformed_data = data_2d.apply(lambda x : (x-xmin)*1023/(xmax-xmin))
+        transformed_data = transformed_data.apply(lambda x: np.int64(x))
 
-#class RMSD:
-#    def get_rmsd(n, angles):
+        #Combine pairs of values into one column
+        combined_data = pd.DataFrame(index = transformed_data.index)
+        label_count = 1
+        for i in range(len(transformed_data.columns)):
+            if 'Sin' in list(transformed_data.columns)[i]:
+                if label_count % 2 != 0:
+                    combined_data['phi'+str(label_count//2 + 1)]=transformed_data.iloc[:,i:i+2].values.tolist()
+                else:
+                    combined_data['psi'+str(label_count//2)]=transformed_data.iloc[:,i:i+2].values.tolist()
+                label_count += 1
+            elif 'phi' in transformed_data.columns[i] and 'Cos' not in transformed_data.columns[i]:
+                combined_data['AA'+str(i//2 + 1)]=transformed_data.iloc[:,i:i+2].values.tolist()
+            else:
+                continue
+        
+        #Convert 2d into 1d
+        hilbert_data = np.zeros((len(combined_data), len(combined_data.columns)))
+        for i in range(len(combined_data)):
+            for j in range(len(combined_data.columns)):
+                hilbert_data[i, j] = self.__xy2d(combined_data.iloc[i,j][0],combined_data.iloc[i,j][1])
+ 
+        #Add index and column titles to hilbert data
+        hilbert_data=pd.DataFrame(hilbert_data, columns = combined_data.columns)
+        
+        return hilbert_data
+
+class RMSD():
+    #
+    #Parameters:
+    #   -angles: pandas DataFrame; contains dihedral angles for all frames of the peptide
+    #   -row: 
+    #Returns:
+    #   -rmsd_vals:
+    def __rmsd_calc(angles, row):
+        rmsd_vals = []
+        remaining = angles.index[row:]
+        for r in remaining:
+            rmsd_vals.append(np.sqrt(((angles.iloc[row,:] - angles.iloc[r,:])**2).mean()))
+        
+        return rmsd_vals
+    
+    #Calculates the RMSD of dihedral angles for a given peptide dataset
+    #Parameters:
+    #   -angles: pandas DataFrame; contains dihedral angles for all frames of the peptide
+    #   -frames: list of int; frames to be compared for rmsd. Defaults to all frames.
+    #Returns:
+    #   -rmsd_df: pandas DataFrame; contains rmsd between the frame sets
+    def get_dihedral_rmsd(self, angles, frames = [], seq = '', pH = '', temp = ''):
+        angles = angles.dropna(axis = 0)
+        
+        if not frames:
+            #DO RMSD COMPARISON ON Dihedral Angles FOR ALL FRAMES
+            rmsd_df = pd.DataFrame(index = angles.index, columns = angles.index)
+#            np.fill_diagonal(rmsd_df.values, 0)
+            rmsd_df.apply(lambda x: self.__rmsd_calc(angles, x.index), axis = 1,
+                          result_type = 'broadcast')
+            for i in range(len(angles)):
+                for j in range(len(angles)):
+                    rmsd_df.iloc[i, j] = np.sqrt(((angles.iloc[i,:] - angles.iloc[j,:]) ** 2).mean())
+        else:
+            #DO RMSD COMPARISON ON Dihedral Angles FOR PASSED FRAMES
+            rmsd_df = pd.DataFrame(index = frames, columns = frames)
+            for i in frames:
+                for j in frames:
+                    rmsd_df.iloc[i, j] = np.sqrt(((angles.iloc[i,:] - angles.iloc[j,:]) ** 2).mean())
+        
+        #Plot the RMSD Heatmap
+        hmap = sns.heatmap(rmsd_df, cmap = "Blues")
+        hmap.set_title("Dihedral RMSD Heatmap - ")
+        hmap.set_xlabel("")
+        hmap.set_ylabel("")
+        plt.savefig()
+        plt.close()
+        
+        return rmsd_df
+    
+    #Calculates the RMSD of Alpha Carbons for a given peptide dataset
+    #Parameters:
+    #   -angles: pandas DataFrame; contains dihedral angles for all frames of the peptide
+    #   -frames: list of int; frames to be compared for rmsd. Defaults to all frames.
+    #Returns:
+    #   -rmsd_df: pandas DataFrame; contains rmsd between the frame sets
+    def get_CA_rmsd(angles, frames = [], seq = '', pH = '', temp = ''):
+        angles = angles.dropna(axis = 0)
+                
+        if not frames:
+            rmsd_df = pd.DataFrame(index = angles.index, columns = angles.index)
+            #DO RMSD COMPARISON ON C(alpha) FOR ALL FRAMES
+            
+        else:
+            rmsd_df = pd.DataFrame(index = frames, columns = frames)
+            #DO RMSD COMPARISON ON C(alpha) FOR PASSED FRAMES
+            
+        
+        #Plot the RMSD Heatmap
+        sns.heatmap(rmsd_df)
+        return rmsd_df
+    
+class Transformations():
+    def hilb_transform_row():
+        return 
+    def hilb_transform_col():
+        return 
+    def hilb_transform():
+        return 
+    def four_transform():
+        return
+    def wavelet_transform():
+        return
+    
